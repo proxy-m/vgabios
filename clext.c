@@ -510,7 +510,7 @@ cirrus_vesa:
 #ifdef CIRRUS_DEBUG
   call cirrus_debug_dump
 #endif
-  cmp al, #0x0F
+  cmp al, #0x10
   ja cirrus_vesa_not_handled
   push bx
   xor bx, bx
@@ -643,6 +643,17 @@ is_text_mode:
   and bh, #0xfe
   or bh, al
   call biosfn_set_single_palette_reg
+
+  mov al, [si+6]  ;; bpp
+  cmp al, #0x08
+  jnz no_8bpp_mode
+  mov al, #0x03
+  xor ah,ah
+  push ax
+  call _load_dac_palette
+  inc sp
+  inc sp
+no_8bpp_mode:
 
   pop dx
   pop bx
@@ -948,7 +959,8 @@ cirrus_vesa_01h_3:
   ;; 32-bit LFB address
   xor ax, ax
   stosw
-  call cirrus_get_lfb_addr
+  mov ax, #0x1013 ;; vendor Cirrus
+  call _pci_get_lfb_addr
   stosw
   or ax, ax
   jz cirrus_vesa_01h_4
@@ -1196,6 +1208,37 @@ cirrus_vesa_07h_2:
   mov  ax, #0x004f
   ret
 
+cirrus_vesa_10h:
+  cmp bl, #0x00
+  jne cirrus_vesa_10h_01
+  mov bx, #0x0f30
+  mov ax, #0x004f
+  ret
+cirrus_vesa_10h_01:
+  cmp bl, #0x01
+  jne cirrus_vesa_10h_02
+  push dx
+  push ds
+  mov dx, #0x40
+  mov ds, dx
+  mov [0xb9], bh
+  pop ds
+  pop dx
+  mov ax, #0x004f
+  ret
+cirrus_vesa_10h_02:
+  cmp bl, #0x02
+  jne cirrus_vesa_unimplemented
+  push dx
+  push ds
+  mov dx, #0x40
+  mov ds, dx
+  mov bh, [0xb9]
+  pop ds
+  pop dx
+  mov ax, #0x004f
+  ret
+
 cirrus_vesa_unimplemented:
   mov ax, #0x014F ;; not implemented
   ret
@@ -1260,54 +1303,6 @@ cgm_4:
 cgm_2:
   clc ;; video mode is supported
 cgm_3:
-  ret
-
-  ; get LFB address
-  ; out - ax:LFB address (high 16 bit)
-  ;; NOTE - may be called in protected mode
-cirrus_get_lfb_addr:
-  push cx
-  push dx
-  push eax
-    xor cx, cx
-    mov dl, #0x00
-    call cirrus_pci_read
-    cmp ax, #0xffff
-    jz cirrus_get_lfb_addr_5
- cirrus_get_lfb_addr_3:
-    mov dl, #0x00
-    call cirrus_pci_read
-    cmp ax, #0x1013 ;; cirrus
-    jz cirrus_get_lfb_addr_4
-    add cx, #0x8
-    cmp cx, #0x200 ;; search bus #0 and #1
-    jb cirrus_get_lfb_addr_3
- cirrus_get_lfb_addr_5:
-    xor dx, dx ;; no LFB
-    jmp cirrus_get_lfb_addr_6
- cirrus_get_lfb_addr_4:
-    mov dl, #0x10 ;; I/O space #0
-    call cirrus_pci_read
-    test ax, #0xfff1
-    jnz cirrus_get_lfb_addr_5
-    shr eax, #16
-    mov dx, ax ;; LFB address
- cirrus_get_lfb_addr_6:
-  pop eax
-  mov ax, dx
-  pop dx
-  pop cx
-  ret
-
-cirrus_pci_read:
-  mov eax, #0x00800000
-  mov ax, cx
-  shl eax, #8
-  mov al, dl
-  mov dx, #0xcf8
-  out dx, eax
-  add dl, #4
-  in  eax, dx
   ret
 
 ;; out - al:bytes per pixel
@@ -1612,7 +1607,8 @@ cirrus_vesa_handlers:
   dw cirrus_vesa_unimplemented
   dw cirrus_vesa_unimplemented
   dw cirrus_vesa_unimplemented
-
+  ;; 10h
+  dw cirrus_vesa_10h
 
 
 ASM_END

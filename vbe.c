@@ -1,6 +1,7 @@
 // ============================================================================================
 //  
 //  Copyright (C) 2002 Jeroen Janssen
+//  Copyright (C) 2012 Hiroshi Miura	
 //
 //  This library is free software; you can redistribute it and/or
 //  modify it under the terms of the GNU Lesser General Public
@@ -38,8 +39,6 @@
 #include "vbe.h"
 #include "vbetables.h"
 
-#define VBE_TOTAL_VIDEO_MEMORY_DIV_64K (VBE_DISPI_TOTAL_VIDEO_MEMORY_MB*1024/64)
-
 // The current OEM Software Revision of this VBE Bios
 #define VBE_OEM_SOFTWARE_REV 0x0002;
 
@@ -63,7 +62,7 @@ _vbebios_product_name:
 .byte        0x00
 
 _vbebios_product_revision:
-.ascii       "$Id$"
+.ascii       "$Id: vbe.c,v 1.64 2011/07/19 18:25:05 vruppert Exp $"
 .byte        0x00
 
 _vbebios_info_string:
@@ -80,7 +79,7 @@ _no_vbebios_info_string:
 
 #if defined(USE_BX_INFO) || defined(DEBUG)
 msg_vbe_init:
-.ascii      "VBE Bios $Id$"
+.ascii      "VBE Bios $Id: vbe.c,v 1.64 2011/07/19 18:25:05 vruppert Exp $"
 .byte	0x0a,0x0d, 0x00
 #endif
 
@@ -715,7 +714,7 @@ vbe_init:
   mov  [bx], al
   pop  bx
   pop  ds
-  mov  ax, # VBE_DISPI_ID4
+  mov  ax, # VBE_DISPI_ID5
   call dispi_set_id
 no_vbe_interface:
 #if defined(USE_BX_INFO) || defined(DEBUG)
@@ -742,7 +741,19 @@ no_vbe_flag:
   mov  ds, ax
   mov  si, #_no_vbebios_info_string
   jmp  _display_string
-ASM_END  
+
+; helper function for memory size calculation
+
+lmulul:
+  and eax, #0x0000FFFF
+  shl ebx, #16
+  or  eax, ebx
+  SEG SS
+  mul eax, dword ptr [di]
+  mov ebx, eax
+  shr ebx, #16
+  ret
+ASM_END
 
 /** Function 00h - Return VBE Controller Information
  * 
@@ -765,10 +776,11 @@ Bit16u *AX;Bit16u ES;Bit16u DI;
         Bit16u            vbe2_info;
         Bit16u            cur_mode=0;
         Bit16u            cur_ptr=34;
+        Bit16u            size_64k;
         ModeInfoListItem  *cur_info=&mode_info_list;
-        
+
         status = read_word(ss, AX);
-        
+
 #ifdef DEBUG
         printf("VBE vbe_biosfn_return_vbe_info ES%x DI%x AX%x\n",ES,DI,status);
 #endif
@@ -784,7 +796,7 @@ Bit16u *AX;Bit16u ES;Bit16u DI;
              (vbe_info_block.VbeSignature[1] == 'B') &&
              (vbe_info_block.VbeSignature[2] == 'E') &&
              (vbe_info_block.VbeSignature[3] == '2')) ||
-             
+
             ((vbe_info_block.VbeSignature[0] == 'V') &&
              (vbe_info_block.VbeSignature[1] == 'E') &&
              (vbe_info_block.VbeSignature[2] == 'S') &&
@@ -796,20 +808,20 @@ Bit16u *AX;Bit16u ES;Bit16u DI;
 #endif
         }
 #endif
-                
+
         // VBE Signature
         vbe_info_block.VbeSignature[0] = 'V';
         vbe_info_block.VbeSignature[1] = 'E';
         vbe_info_block.VbeSignature[2] = 'S';
         vbe_info_block.VbeSignature[3] = 'A';
-        
+
         // VBE Version supported
         vbe_info_block.VbeVersion = 0x0200;
-        
+
         // OEM String
         vbe_info_block.OemStringPtr_Seg = 0xc000;
         vbe_info_block.OemStringPtr_Off = &vbebios_copyright;
-        
+
         // Capabilities
         vbe_info_block.Capabilities[0] = VBE_CAPABILITY_8BIT_DAC;
         vbe_info_block.Capabilities[1] = 0;
@@ -820,11 +832,12 @@ Bit16u *AX;Bit16u ES;Bit16u DI;
         vbe_info_block.VideoModePtr_Seg= ES ;
         vbe_info_block.VideoModePtr_Off= DI + 34;
 
-        // VBE Total Memory (in 64b blocks)
-        vbe_info_block.TotalMemory = VBE_TOTAL_VIDEO_MEMORY_DIV_64K;
+        // VBE Total Memory (in 64k blocks)
+        outw(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_VIDEO_MEMORY_64K);
+        vbe_info_block.TotalMemory = inw(VBE_DISPI_IOPORT_DATA);
 
         if (vbe2_info)
-	{
+        {
                 // OEM Stuff
                 vbe_info_block.OemSoftwareRev = VBE_OEM_SOFTWARE_REV;
                 vbe_info_block.OemVendorNamePtr_Seg = 0xc000;
@@ -837,26 +850,33 @@ Bit16u *AX;Bit16u ES;Bit16u DI;
                 // copy updates in vbe_info_block back
                 memcpyb(ES, DI, ss, &vbe_info_block, sizeof(vbe_info_block));
         }
-	else
-	{
+        else
+        {
                 // copy updates in vbe_info_block back (VBE 1.x compatibility)
                 memcpyb(ES, DI, ss, &vbe_info_block, 256);
-	}
-                
+        }
+
         do
         {
+                size_64k = (Bit16u)((Bit32u)cur_info->info.XResolution * cur_info->info.XResolution * cur_info->info.BitsPerPixel) >> 19;
+
                 if ((cur_info->info.XResolution <= dispi_get_max_xres()) &&
-                    (cur_info->info.BitsPerPixel <= dispi_get_max_bpp())) {
+                    (cur_info->info.BitsPerPixel <= dispi_get_max_bpp()) &&
+                    (size_64k <= vbe_info_block.TotalMemory)) {
 #ifdef DEBUG
                   printf("VBE found mode %x => %x\n", cur_info->mode,cur_mode);
 #endif
                   write_word(ES, DI + cur_ptr, cur_info->mode);
                   cur_mode++;
                   cur_ptr+=2;
+                } else {
+#ifdef DEBUG
+                  printf("VBE mode %x (xres=%x / bpp=%02x) not supported \n", cur_info->mode,cur_info->info.XResolution,cur_info->info.BitsPerPixel);
+#endif
                 }
                 cur_info++;
         } while (cur_info->mode != VBE_VESA_MODE_END_OF_LIST);
-        
+
         // Add vesa mode list terminator
         write_word(ES, DI + cur_ptr, cur_info->mode);
 
@@ -884,29 +904,41 @@ Bit16u *AX;Bit16u CX; Bit16u ES;Bit16u DI;
         ModeInfoBlock     info;
         ModeInfoListItem  *cur_info;
         Boolean           using_lfb;
+        Bit16u            lfb_addr;
 
 #ifdef DEBUG
         printf("VBE vbe_biosfn_return_mode_information ES%x DI%x CX%x\n",ES,DI,CX);
 #endif
 
         using_lfb=((CX & VBE_MODE_LINEAR_FRAME_BUFFER) == VBE_MODE_LINEAR_FRAME_BUFFER);
-        
+
         CX = (CX & 0x1ff);
-        
+
         cur_info = mode_info_find_mode(CX, using_lfb, &cur_info);
 
         if (cur_info != 0)
         {
 #ifdef DEBUG
                 printf("VBE found mode %x\n",CX);
-#endif        
+#endif
                 memsetb(ss, &info, 0, sizeof(ModeInfoBlock));
                 memcpyb(ss, &info, 0xc000, &(cur_info->info), sizeof(ModeInfoBlockCompact));
+                if (using_lfb) {
+                  info.NumberOfBanks = 1;
+                }
+#ifdef PCI_VID
+                lfb_addr = pci_get_lfb_addr(PCI_VID);
+#else
+                lfb_addr = pci_get_lfb_addr(0x1234); // experimental vendor
+#endif
+                if (lfb_addr > 0) {
+                  info.PhysBasePtr = ((Bit32u)lfb_addr << 16);
+                }
                 if (info.WinAAttributes & VBE_WINDOW_ATTRIBUTE_RELOCATABLE) {
                   info.WinFuncPtr = 0xC0000000UL;
                   *(Bit16u *)&(info.WinFuncPtr) = (Bit16u)(dispi_set_bank_farcall);
                 }
-                
+
                 result = 0x4f;
         }
         else
@@ -916,7 +948,7 @@ Bit16u *AX;Bit16u CX; Bit16u ES;Bit16u DI;
 #endif
                 result = 0x100;
         }
-        
+
         if (result == 0x4f)
         {
                 // copy updates in mode_info_block back
@@ -953,21 +985,21 @@ Bit16u *AX;Bit16u BX; Bit16u ES;Bit16u DI;
         BX = (BX & 0x1ff);
 
         //result=read_word(ss,AX);
-        
+
         // check for non vesa mode
         if (BX<VBE_MODE_VESA_DEFINED)
         {
                 Bit8u   mode;
-                
+
                 dispi_set_enable(VBE_DISPI_DISABLED);
                 // call the vgabios in order to set the video mode
                 // this allows for going back to textmode with a VBE call (some applications expect that to work)
-                
+
                 mode=(BX & 0xff);
                 biosfn_set_video_mode(mode);
                 result = 0x4f;
         }
-        
+
         cur_info = mode_info_find_mode(BX, using_lfb, &cur_info);
 
         if (cur_info != 0)
@@ -979,13 +1011,18 @@ Bit16u *AX;Bit16u BX; Bit16u ES;Bit16u DI;
                         cur_info->info.YResolution,
                         cur_info->info.BitsPerPixel);
 #endif
-                
+
                 // first disable current mode (when switching between vesa modi)
                 dispi_set_enable(VBE_DISPI_DISABLED);
 
                 if (cur_info->info.BitsPerPixel == 4)
                 {
                   biosfn_set_video_mode(0x6a);
+                }
+
+                if (cur_info->info.BitsPerPixel == 8)
+                {
+                  load_dac_palette(3);
                 }
 
                 dispi_set_bpp(cur_info->info.BitsPerPixel);
@@ -998,15 +1035,15 @@ Bit16u *AX;Bit16u BX; Bit16u ES;Bit16u DI;
                 write_word(BIOSMEM_SEG,BIOSMEM_VBE_MODE,BX);
                 write_byte(BIOSMEM_SEG,BIOSMEM_VIDEO_CTL,(0x60 | no_clear));
 
-                result = 0x4f;                  
+                result = 0x4f;
         }
         else
         {
 #ifdef DEBUG
                 printf("VBE *NOT* found mode %x\n" , BX);
-#endif        
+#endif
                 result = 0x100;
-                
+
                 // FIXME: redirect non VBE modi to normal VGA bios operation
                 //        (switch back to VGA mode
                 if (BX == 3)
@@ -1082,7 +1119,7 @@ void vbe_biosfn_restore_video_state(ES, BX)
 
     enable = read_word(ES, BX);
     BX += 2;
-    
+
     if (!(enable & VBE_DISPI_ENABLED)) {
         outw(VBE_DISPI_IOPORT_INDEX,VBE_DISPI_INDEX_ENABLE);
         outw(VBE_DISPI_IOPORT_DATA, enable);
@@ -1423,3 +1460,197 @@ _fail:
   mov ax, #0x014f
   ret
 ASM_END
+
+/* Virtual monitor EDID information */
+ASM_START
+vesa_EDID:
+  db 0x00,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00
+                                      /* 0x0000 8-byte header */
+  db 0x04,0x21                        /* 0x0008 Vendor ID ("AAA") */
+  db 0xAB,0xCD                        /* 0x000A Product ID */
+  db 0x00,0x00,0x00,0x00              /* 0x000C Serial number (none) */
+  db 54, 10                           /* 0x0010 Week of manufactur (54) and year of manufacture (2000) */
+  db 0x01, 0x03                       /* 0x0012 EDID version number (1.3) */
+  db 0x0F                             /* 0x0014 Video signal interface (analogue, 0.700 : 0.300 : 1.000 V p-p,
+                                                Video Setup: Blank Level = Black Level, Separate Sync H & V Signals are
+                                                supported, Composite Sync Signal on Horizontal is supported, Composite 
+                                                Sync Signal on Green Video is supported, Serration on the Vertical Sync
+                                                is supported) */
+  db 0x21,0x19                        /* 0x0015 Scren size (330 mm * 250 mm) */
+  db 0x78                             /* 0x0017 Display gamma (2.2) */
+  db 0x0F                             /* 0x0018 Feature flags (no DMPS states, RGB, display is continuous frequency) */
+  db 0x78,0xF5                        /* 0x0019 Least significant bits for chromaticity and default white point */
+  db 0xA6,0x55,0x48,0x9B,0x26,0x12,0x50,0x54
+                                      /* 0x001B Most significant bits for chromaticity and default white point */
+
+  db 0xFF                             /* 0x0023 Established timings 1 (720 x 400 @ 70Hz, 720 x 400 @ 88Hz,
+                                                   640 x 480 @ 60Hz, 640 x 480 @ 67Hz, 640 x 480 @ 72Hz, 640 x 480 @ 75Hz,
+                                                   800 x 600 @ 56Hz, 800 x 600 @ 60Hz) - historical resolutions */
+  db 0xEF                             /* 0x0024 Established timings 2 (800 x 600 @ 72Hz, 800 x 600 @ 75Hz, 832 x 624 @ 75Hz
+                                                   not 1024 x 768 @ 87Hz(I), 1024 x 768 @ 60Hz, 1024 x 768 @ 70Hz,
+                                                   1024 x 768 @ 75Hz, 1280 x 1024 @ 75Hz) - historical resolutions */
+  db 0x80                             /* 0x0025 Established timings 2 (1152 x 870 @ 75Hz and no manufacturer timings) */
+
+                                      /* Standard timing */
+                                      /* First byte: X resolution, divided by 8, less 31 (256–2288 pixels) */
+                                      /* bit 7-6, X:Y pixel ratio: 00=16:10; 01=4:3; 10=5:4; 11=16:9 */
+                                      /* bit 5-0, Vertical frequency, less 60 (60–123 Hz), nop 01 01 */
+#ifdef LOWRES
+  db 0x81, 0x9A                       /* 0x0026 Standard timing #1 (1280 x 1024 @ 70Hz) - preferable*/
+  db 0x61, 0x59                       /* 0x0028 Standard timing #2 (1024 x 768 @ 85 Hz) */
+  db 0x45, 0x59                       /* 0x002A Standard timing #3 (800 x 600 @ 85 Hz) */
+  db 0x31, 0x4A                       /* 0x002C Standard timing #4 (640 x 480 @ 70 Hz) */
+  db 0x31, 0x59                       /* 0x002E Standard timing #5 (640 x 480 @ 85 Hz) */
+  db 0x01, 0x01                       /* 0x0030 Standard timing #6 (unused) */
+  db 0x01, 0x01                       /* 0x0032 Standard timing #7 (unused) */
+  db 0x01, 0x01                       /* 0x0034 Standard timing #8 (unused) */
+
+                                      /* 0x0036 First 18-byte descriptor (1280 x 1024) */
+  db 0x30, 0x2a                       /*        Pixel clock = 108000000 Hz */
+  db 0x00                             /* 0x0038 Horizontal addressable pixels low byte (0x0500 & 0xFF) */
+  db 0x98                             /* 0x0039 Horizontal blanking low byte (0x0198 & 0xFF) */
+  db 0x51                             /* 0x003A Horizontal addressable pixels high 4 bits (0x0500 >> 8), and */
+                                      /*        Horizontal blanking high 4 bits (0x0198 >> 8) */
+  db 0x00                             /* 0x003B Vertical addressable pixels low byte (0x0400 & 0xFF) */
+  db 0x2A                             /* 0x003C Vertical blanking low byte (0x002A & 0xFF) */
+  db 0x40                             /* 0x003D Vertical addressable pixels high 4 bits (0x0400 >> 8), and */
+                                      /*        Vertical blanking high 4 bits (0x002A >> 8) */
+  db 0x30                             /* 0x003E Horizontal front porch in pixels low byte (0x0030 & 0xFF) */
+  db 0x70                             /* 0x003F Horizontal sync pulse width in pixels low byte (0x0070 & 0xFF) */
+  db 0x13                             /* 0x0040 Vertical front porch in lines low 4 bits (0x0001 & 0x0F), and */
+                                      /*        Vertical sync pulse width in lines low 4 bits (0x0003 & 0x0F) */
+  db 0x00                             /* 0x0041 Horizontal front porch pixels high 2 bits (0x0030 >> 8), and */
+                                      /*        Horizontal sync pulse width in pixels high 2 bits (0x0070 >> 8), and */
+                                      /*        Vertical front porch in lines high 2 bits (0x0001 >> 4), and */
+                                      /*        Vertical sync pulse width in lines high 2 bits (0x0003 >> 4) */
+  db 0x2C                             /* 0x0042 Horizontal addressable video image size in mm low 8 bits (0x012C & 0xFF) */
+  db 0xE1                             /* 0x0043 Vertical addressable video image size in mm low 8 bits (0x00E1 & 0xFF) */
+  db 0x10                             /* 0x0044 Horizontal addressable video image size in mm low 8 bits (0x012C >> 8), and */
+                                      /*        Vertical addressable video image size in mm low 8 bits (0x00E1 >> 8) */
+  db 0x00                             /* 0x0045 Left and right border size in pixels (0x00) */
+  db 0x00                             /* 0x0046 Top and bottom border size in lines (0x00) */
+  db 0x1E                             /* 0x0047 Flags (non-interlaced, no stereo, analog composite sync, sync on */
+                                      /*        all three (RGB) video signals) */
+#else
+  db 0xD1, 0x00                       /* 0x0026 Standard timing #1 (1920 x 1200 @ 60 Hz) - preferable*/
+  db 0x61, 0x59                       /* 0x0028 Standard timing #2 (1024 x 768 @ 85 Hz) */
+  db 0x45, 0x59                       /* 0x002A Standard timing #3 (800 x 600 @ 85 Hz) */
+  db 0x81, 0xCA                       /* 0x002C Standard timing #4 (1280 x 720 @ 70 Hz) */
+  db 0x81, 0x0A                       /* 0x002E Standard timing #5 (1280 x 800 @ 70 Hz) */
+  db 0xA9, 0xC0                       /* 0x0030 Standard timing #6 (1600 x 900 @ 60 Hz) */
+  db 0xA9, 0x40                       /* 0x0034 Standard timing #7 (1600 x 1200 @ 60 Hz) */
+  db 0xD1, 0x00                       /* 0x0032 Standard timing #8 (1920 x 1080 @ 60 Hz) */
+
+                                      /* 0x0036 First 18-byte descriptor (1920 x 1200) */
+  db 0x3C, 0x28                       /*        Pixel clock = 154000000 Hz */
+  db 0x80                             /* 0x0038 Horizontal addressable pixels low byte (0x0780 & 0xFF) */
+  db 0xA0                             /* 0x0039 Horizontal blanking low byte (0x00A0 & 0xFF) */
+  db 0x70                             /* 0x003A Horizontal addressable pixels high 4 bits ((0x0780 & 0x0F00) >> 4), and */
+                                      /*        Horizontal blanking high 4 bits ((0x00A0 & 0x0F00 ) >> 8) as low bits */
+  db 0xB0                             /* 0x003B Vertical addressable pixels low byte (0x04B0 & 0xFF) */
+  db 0x23                             /* 0x003C Vertical blanking low byte (0x0023 & 0xFF) */
+  db 0x40                             /* 0x003D Vertical addressable pixels high 4 bits ((0x04B0 & 0x0F00) >> 4), and */
+                                      /*        Vertical blanking high 4 bits ((0x0024 & x0F00) >> 8) */
+  db 0x30                             /* 0x003E Horizontal front porch in pixels low byte (0x0030 & 0xFF) */
+  db 0x20                             /* 0x003F Horizontal sync pulse width in pixels low byte (0x0020 & 0xFF) */
+  db 0x36                             /* 0x0040 Vertical front porch in lines low 4 bits ((0x0003 & 0x0F) << 4), and */
+                                      /*        Vertical sync pulse width in lines low 4 bits (0x0006 & 0x0F) */
+  db 0x00                             /* 0x0041 Horizontal front porch pixels high 2 bits (0x0030 >> 8), and */
+                                      /*        Horizontal sync pulse width in pixels high 2 bits (0x0020 >> 8), and */
+                                      /*        Vertical front porch in lines high 2 bits (0x0003 >> 4), and */
+                                      /*        Vertical sync pulse width in lines high 2 bits (0x0006 >> 4) */
+  db 0x06                             /* 0x0042 Horizontal addressable video image size in mm low 8 bits (0x0206 & 0xFF) */
+  db 0x44                             /* 0x0043 Vertical addressable video image size in mm low 8 bits (0x0144 & 0xFF) */
+  db 0x21                             /* 0x0044 Horizontal addressable video image size in mm high 8 bits (0x0206 >> 8), and */
+                                      /*        Vertical addressable video image size in mm high 8 bits (0x0144 >> 8) */
+  db 0x00                             /* 0x0045 Left and right border size in pixels (0x00) */
+  db 0x00                             /* 0x0046 Top and bottom border size in lines (0x00) */
+  db 0x1E                             /* 0x0047 Flags (non-interlaced, no stereo, analog composite sync, sync on */
+                                      /*        all three (RGB) video signals) */
+
+#endif
+
+  db 0x00,0x00,0x00,0xfD,0x00         /* 0x0048 Second 18-byte descriptor - display range */
+  db 50,150                           /* Vertical 50Hz - 150Hz */
+  db 31,135                           /* Horiz 31kHz - 135kHz */
+  db 16                               /* clock 160MHz */
+  db 0
+  db 0x0A,0x20,0x20,0x20,0x20
+  db 0x20,0x20
+
+  db 0x00,0x00,0x00,0xFF,0x00         /* 0x005A Third 18-byte descriptor - display product serial number */
+  .ascii "0123456789"
+  db 0x0A,0x20,0x20
+
+  db 0x00,0x00,0x00,0xFC,0x00         /* 0x006C Fourth 18-byte descriptor - display product name  */
+  .ascii "Bochs Screen"
+  db 0x0A
+
+  db 0x00                             /* 0x007E Extension block count (none)  */
+  db 0x00                             /* 0x007F Checksum (ignored - recalculated when needed)  */
+ASM_END 
+
+/** Function 15h - Display Identification Extensions
+ * Input:    AX    = 4F0Ah   VBE 2.0 Protected Mode Interface
+ *           BL    = 00h     Get capabilities
+ *           BL    = 01h     Read EDID
+ *           CX    =         Controller unit number
+ *           DX    =         EDID block number (if BL = 01h)
+ *           ES:DI =         Null pointer/reserved (if BL = 00h)
+ *           ES:DI =         Pointer to buffer to store EDID block (if BL = 01h)
+ *
+ * Output:   AX    =         Status
+ *           BH    =         Approximate time to get EDID in seconds rounded up (if BL = 00h)
+ *           BL    =         DDC level supported: (if BL = 00h)
+ *                            Bit    Meaning if set
+ *                             0      DDC1 supported
+ *                             1      DDC2 supported
+ *                             2      Screen blanked during transfer
+ *           BH    =         Unchanged (if BL = 01h)
+ *           CX    =         Unchanged
+ *           ES:DI =         Unchanged
+ */
+
+
+ASM_START
+vbe_biosfn_display_identification_extensions:
+  cmp bl,#0x01
+  jb _get_capabilities
+  je _read_EDID
+_failed:
+  mov ax, #0x014f
+  ret
+
+_get_capabilities:
+  test cx,cx
+  jne _failed
+  mov ax, #0x004f
+  mov bx, #0x0101
+  ret
+
+_read_EDID:
+  test cx,cx
+  jne _failed
+  test dx,dx
+  jne _failed
+  push si
+  push di
+  cld
+  mov cx,#127
+  mov si, # vesa_EDID
+  xor ah,ah
+_nextByte:
+  db 0x2E
+    lodsb
+  stosb
+  sub ah,al
+  loop _nextByte
+  mov al,ah
+  stosb
+  pop di
+  pop si
+  xor cx,cx
+  mov ax, #0x004f
+  ret
+
+ASM_END 

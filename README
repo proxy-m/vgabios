@@ -82,7 +82,8 @@ The source code is based on information taken from :
 
 Feedback
 --------
-Please report any bugs, comments, patches for this VGA Bios to info@vruppert.de
+Please report any bugs, comments, patches for this VGA Bios
+on savannah pages at: http://savannah.nongnu.org/projects/vgabios/
 You can find the latest release at : http://www.nongnu.org/vgabios/
 For any information on bochs, visit the website http://bochs.sourceforge.net/
 For any information on qemu, visit the website http://fabrice.bellard.free.fr/qemu/
@@ -90,6 +91,27 @@ For any information on qemu, visit the website http://fabrice.bellard.free.fr/qe
 
 History
 -------
+vgabios-0.7a : Oct 30 2011
+  - Volker
+    . added HDTV resolutions (patch by Tristan Schmelcher)
+    . added PCI ROM support to the VBE-specific images
+    . implemented vgabios functions with AX=0x112x (patch by Hugo Mercier)
+    . fixed DAC palette in 8 bpp VBE and Cirrus modes (using the same palette
+      as VGA mode 0x13)
+    . Makefile cleanup (patch by Gerd Hoffmann)
+
+vgabios-0.6c : Apr 08 2009
+  - Volker
+    . added DPMS support to cirrus vgabios (patch from Gleb Natapov)
+    . use VBE LFB address from PCI base address if present
+    . added support for a lot more non-standard VBE modes (e.g. widescreen modes)
+    . minor bugfixes
+
+vgabios-0.6b : May 30 2008
+  - Volker
+    . added PCI data structure for the Cirrus VGABIOS images
+    . minor bugfixes in biossums utility, VBE support and makefile
+
 vgabios-0.6a : Aug 19 2006
   - Volker
     . added minimal support for the video parameter table (VPT)
