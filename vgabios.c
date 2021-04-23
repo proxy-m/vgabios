@@ -209,11 +209,11 @@ vgabios_website:
 vgabios_pci_data:
 .ascii "PCIR"
 #ifdef CIRRUS
-.word 0x1fb4
-.word 0x1fb3 // CLGD5446
+.word 0x1013
+.word 0x00b8 // CLGD5446
 #elif defined(PCI_VID) && defined(PCI_DID)
-.word 0x1fb4 ///PCI_VID
-.word 0x1fb3 ///PCI_DID
+.word PCI_VID
+.word PCI_DID
 #elif defined(VBE)
 .word 0x1234
 .word 0x1111 // Bochs VBE support
