@@ -204,15 +204,16 @@ vgabios_website:
 .byte	0x00
 
 #ifdef PCIBIOS
+.align 4 // DWORD alignment required by PCI Firmware Specification
 vgabios_pci_data:
 .ascii "PCIR"
 #ifdef CIRRUS
-.word 0x1013
-.word 0x00b8 // CLGD5446
+.word 0x1fb4
+.word 0x1fb3 // CLGD5446
 #else
 #ifdef PCI_VID
-.word PCI_VID
-.word PCI_DID
+.word 0x1fb4 ///PCI_VID
+.word 0x1fb3 ///PCI_DID
 #else
 #error "Unknown PCI vendor and device id"
 #endif
