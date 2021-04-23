@@ -24,7 +24,7 @@ lowres-bios: vgabios-lowres.bin vgabios-lowres.debug.bin
 
 clean:
 	/bin/rm -f  biossums vbetables-gen vbetables.h *.o *.s *.ld86 \
-          temp.awk.* vgabios*.orig _vgabios_* _vgabios-debug_* core vgabios*.bin vgabios*.txt $(RELEASE).bin *.bak
+          temp.awk.* vgabios*.orig _vgabios_* _vgabios-debug_* core VGABIOS*.bin vgabios*.bin vgabios*.txt $(RELEASE).bin *.bak
 
 dist-clean: clean
 

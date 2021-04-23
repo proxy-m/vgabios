@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define VBE_DISPI_TOTAL_VIDEO_MEMORY_MB 8 ///16
+#define VBE_DISPI_TOTAL_VIDEO_MEMORY_MB 16 ///8
 
 typedef struct {
     int width;
